@@ -1,0 +1,1 @@
+## MLP Mixer for Real time Physics Simulations for Granular Flows
