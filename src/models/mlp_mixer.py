@@ -89,16 +89,19 @@ class MixerBlock(nn.Module):
 
     def forward(self, x):
         # shape x [256, 8, 512] [bs, patches/time_steps, channels
+        x = x.reshape(7, 525)
         y = self.LN1(x)
 
-        y = y.transpose(1, 2)
+        y = y.transpose(0, 1)
+        # y=y.reshape(525,7)
         y = self.mlp_block_token_mixing(y)
-        y = y.transpose(1, 2)
+
+        y = y.transpose(0, 1)
 
         if self.use_se:
             y = self.se(y)
-        x = x + y
 
+        x = x + y
         y = self.LN2(x)
         y = self.mlp_block_channel_mixing(y)
 
@@ -177,7 +180,7 @@ class MixerBlock_Token(nn.Module):
 class MlpMixer(nn.Module):
     def __init__(self, num_classes, num_blocks, hidden_dim, tokens_mlp_dim,
                  channels_mlp_dim, seq_len, pred_len, activation='gelu',
-                 mlp_block_type='normal', regularization=0, input_size=51,
+                 mlp_block_type='normal', regularization=0, input_size=75,
                  initialization='none', r_se=4, use_max_pooling=False,
                  use_se=False):
 
@@ -225,19 +228,35 @@ class MlpMixer(nn.Module):
 
         self.fc_out = nn.Linear(self.hidden_dim, self.num_classes)
 
+
         self.pred_len = pred_len
-        self.conv_out = nn.Conv1d(self.seq_len, self.pred_len, 1, stride=1)
+        # self.conv_out = nn.Conv1d(self.seq_len, self.pred_len, 1, stride=1)
+        self.conv_out = nn.Conv1d(7, 1, 1, stride=1)
 
     def forward(self, x):
+        x = x.reshape(7,75)
         x = x.unsqueeze(1)
-        y = self.conv(x)
-        y = y.squeeze(dim=3).transpose(1, 2)
 
+        y = self.conv(x)
+        y = y.squeeze(dim=1).transpose(1, 2)
+        # print('value before mixer block', y.shape)
         # [256, 8, 512] [bs, patches/time_steps, channels]
         for mb in self.Mixer_Block:
             y = mb(y)
         y = self.LN(y)
-
-        out = self.fc_out(self.conv_out(y))
+        # print('shape before conv out', y.shape)
+        a = self.conv_out(y)
+        a = a.reshape(1,525)
+        # print('shape conv out',a.shape)
+        out = self.fc_out(a)
+        # print('final shape',out.shape)
 
         return out
+
+# things to change
+# num_classes argument
+# hidden_dim = 525
+# seq_len = 8 or 40? not sure
+# tokens_mlp_dim
+# channels_mlp_dim = ?? need to figure it out
+#
