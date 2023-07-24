@@ -65,27 +65,29 @@ def train(model):
         average_train_loss.append(running_loss/iteration)
 
 
-    # model.eval()
-    # with torch.no_grad():
-    #     running_loss = 0
-    #     for batch_idx, (valid, gt_valid) in enumerate(valid_dataloader):
-    #         valid = valid.reshape(40, 7, 25, 3)
-    #         gt_valid = gt_valid.reshape(40, 1, 25, 3)
-    #         running_loss = 0.0
-    #         iteration = gt_valid.shape[0]
-    #         for i in tqdm(range(iteration)):
-    #             valid_data = valid[i, :, :, :]
-    #             gt_valid_data = gt_valid[i, :, :, :]
-    #             valid_data = valid_data.reshape(1, 7, 25, 3)
-    #             gt_valid_data = gt_valid_data.reshape(1, 1, 25, 3)
-    #             prediction_valid = model(valid_data)
-    #             loss = criterion(prediction_valid, gt_valid_data)
-    #
-    #             # print(f"Iteration Count: {batch_idx}, Training Loss: {loss.item()}")
-    #             valid_loss.append(loss.item())
-    #             running_loss += loss.item()
-    #
-    #         average_train_loss.append(running_loss / iteration)
+        model.eval()
+        with torch.no_grad():
+            running_loss = 0
+            for batch_idx, (valid, gt_valid) in enumerate(valid_dataloader):
+                valid = valid.reshape(40, 7, 25, 3)
+                gt_valid = gt_valid.reshape(40, 1, 25, 3)
+                running_loss = 0.0
+                iteration = gt_valid.shape[0]
+                for i in tqdm(range(iteration)):
+                    valid_data = valid[i, :, :, :]
+                    gt_valid_data = gt_valid[i, :, :, :]
+                    valid_data = valid_data.reshape(1, 7, 25, 3)
+                    gt_valid_data = gt_valid_data.reshape(1, 1, 25, 3)
+                    prediction_valid = model(valid_data)
+                    prediction_valid = prediction_valid.reshape(25, 3)
+
+                    loss = criterion(prediction_valid, gt_valid_data)
+
+                    print(f"Iteration Count: {batch_idx}, Validation Loss: {loss.item()}")
+                    valid_loss.append(loss.item())
+                    running_loss += loss.item()
+
+                average_train_loss.append(running_loss / iteration)
     torch.save(model.state_dict(), f'model_{model_name}.pt')
 
 
