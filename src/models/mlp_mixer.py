@@ -256,7 +256,7 @@ class MlpMixer(nn.Module):
 # things to change
 # num_classes argument
 # hidden_dim = 525
-# seq_len = 8 or 40? not sure
+# seq_len = 8
 # tokens_mlp_dim
 # channels_mlp_dim = ?? need to figure it out
 #

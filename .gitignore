@@ -162,3 +162,6 @@ notebooks/
 .DS_Store
 .idea/
 mlpmixer_ssgp
+dataset/rollout_test_0_svd.pkl
+saved_model/
+rollout/
