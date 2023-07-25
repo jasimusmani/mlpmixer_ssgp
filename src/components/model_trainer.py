@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from src.components.data_ingestion import TrajectoryDataset
 from src.models.mlp import MLP
 from src.models.mlp_mixer import MlpMixer
@@ -13,7 +14,6 @@ import os
 import timeit
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device)
 model_name = "MLP_test1"
 pos_train = np.load('/Users/jasim/mlpmixer_ssgp/dataset/position_wheel_train.npy')
 force_train = np.load('/Users/jasim/mlpmixer_ssgp/dataset/force_wheel_train.npy')
@@ -28,9 +28,11 @@ if not os.path.exists(output_folder):
 
 model_save = f'/Users/jasim/mlpmixer_ssgp/saved_model/{model_name}/{model_name}.pt'
 
+log_dir = f'/Users/jasim/mlpmixer_ssgp/saved_model/{model_name}'
+writer = SummaryWriter(log_dir=log_dir)
 
 lr = 0.001
-epochs = 100
+num_epochs = 100
 batch_size = 1
 
 dataset_train = TrajectoryDataset(pos_train, force_train)
@@ -52,68 +54,75 @@ model= MlpMixer(hidden_dim = 525, seq_len = 7, num_classes = 75, num_blocks = 1,
 def train(model):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    for batch_idx, (train, gt) in enumerate(train_dataloader):
-        train = train.reshape(40, 7, 25, 3)
-        gt = gt.reshape(40, 1, 25, 3)
-        running_loss = 0.0
-        iteration = gt.shape[0]
-        progress_bar = tqdm(total=iteration, desc=f' Model Training: Batch {batch_idx}', position=0,
+    for epoch in range(num_epochs):
+        progress_bar = tqdm(total=num_epochs, desc=f' Model Training: Epoch {epoch}', position=0,
                             leave=True)
+        for batch_idx, (train, gt) in enumerate(train_dataloader):
+            train = train.reshape(40, 7, 25, 3)
+            gt = gt.reshape(40, 1, 25, 3)
+            running_loss = 0.0
+            iteration = gt.shape[0]
+            progress_bar = tqdm(total=iteration, desc=f' Model Training: Epoch {epoch} Batch {batch_idx}', position=0,
+                                leave=True)
 
-        for i in range(iteration):
-            optimizer.zero_grad()
-            train_data = train[i,:,:,:]
-            gt_data = gt[i, :, :, :]
-            train_data=train_data.reshape(1,7,25,3)
-            gt_data = gt_data.reshape(1,1, 25, 3)
-            prediction = model(train_data)
-            prediction=prediction.reshape(25,3)
-            # print('prediction tensor shape',prediction.shape)
-            loss = criterion(prediction, gt_data)
+            for i in range(iteration):
+                optimizer.zero_grad()
+                train_data = train[i,:,:,:]
+                gt_data = gt[i, :, :, :]
+                train_data=train_data.reshape(1,7,25,3)
+                gt_data = gt_data.reshape(1,1, 25, 3)
+                prediction = model(train_data)
+                prediction=prediction.reshape(25,3)
+                # print('prediction tensor shape',prediction.shape)
+                loss = criterion(prediction, gt_data)
 
-            # Backward pass and optimization step
-            loss.backward()
-            optimizer.step()
-            # print(f"Iteration Count: {batch_idx}, Training Loss: {loss.item()}")
-            train_loss.append(loss.item())
-            running_loss += loss.item()
-            progress_bar.update(1)
-            progress_bar.set_postfix({'Loss': running_loss / (i + 1)})
+                # Backward pass and optimization step
+                loss.backward()
+                optimizer.step()
+                # print(f"Iteration Count: {batch_idx}, Training Loss: {loss.item()}")
+                train_loss.append(loss.item())
+                running_loss += loss.item()
+                writer.add_scalar('Loss/train', loss.item(), batch_idx * len(train_dataloader) + i)
+                progress_bar.update(1)
+                progress_bar.set_postfix({'Loss': running_loss / (i + 1)})
 
-        progress_bar.close()
+            progress_bar.close()
 
-        model.eval()
-        with torch.no_grad():
-            running_loss = 0
-            for batch_idx, (valid, gt_valid) in enumerate(valid_dataloader):
-                valid = valid.reshape(40, 7, 25, 3)
-                gt_valid = gt_valid.reshape(40, 1, 25, 3)
-                running_loss = 0.0
-                iteration = gt_valid.shape[0]
+            model.eval()
+            with torch.no_grad():
+                running_loss = 0
+                for batch_idx, (valid, gt_valid) in enumerate(valid_dataloader):
+                    valid = valid.reshape(40, 7, 25, 3)
+                    gt_valid = gt_valid.reshape(40, 1, 25, 3)
+                    running_loss = 0.0
+                    iteration = gt_valid.shape[0]
 
-                progress_bar = tqdm(total=iteration, desc=f' Model Validation: Batch {batch_idx}', position=0,
-                                    leave=True)
+                    # progress_bar = tqdm(total=iteration, desc=f' Model Validation: Batch {batch_idx}', position=0,
+                    #                     leave=True)
 
-                for i in range(iteration):
-                    valid_data = valid[i, :, :, :]
-                    gt_valid_data = gt_valid[i, :, :, :]
-                    valid_data = valid_data.reshape(1, 7, 25, 3)
-                    gt_valid_data = gt_valid_data.reshape(1, 1, 25, 3)
-                    prediction_valid = model(valid_data)
-                    prediction_valid = prediction_valid.reshape(25, 3)
+                    for i in range(iteration):
+                        valid_data = valid[i, :, :, :]
+                        gt_valid_data = gt_valid[i, :, :, :]
+                        valid_data = valid_data.reshape(1, 7, 25, 3)
+                        gt_valid_data = gt_valid_data.reshape(1, 1, 25, 3)
+                        prediction_valid = model(valid_data)
+                        prediction_valid = prediction_valid.reshape(25, 3)
 
-                    loss = criterion(prediction_valid, gt_valid_data)
+                        loss = criterion(prediction_valid, gt_valid_data)
 
-                    # print(f"Iteration Count: {batch_idx}, Validation Loss: {loss.item()}")
-                    valid_loss.append(loss.item())
-                    running_loss += loss.item()
-                    progress_bar.update(1)
-                    progress_bar.set_postfix({'Loss': running_loss / (i + 1)})
+                        # print(f"Iteration Count: {batch_idx}, Validation Loss: {loss.item()}")
+                        valid_loss.append(loss.item())
+                        running_loss += loss.item()
+                    #     progress_bar.update(1)
+                    #     progress_bar.set_postfix({'Loss': running_loss / (i + 1)})
+                    #
+                    # progress_bar.close()
 
-                progress_bar.close()
-
-                average_train_loss.append(running_loss / iteration)
-
+                    average_train_loss.append(running_loss / iteration)
+        progress_bar.update(1)
+        progress_bar.set_postfix({'Loss': running_loss / (i + 1)})
+    progress_bar.close()
+    writer.close()
     torch.save(model.state_dict(), model_save)
 
 
