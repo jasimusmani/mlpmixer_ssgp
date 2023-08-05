@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from src.components.data_ingestion import TrajectoryDataset
 from src.models.mlp import MLP
 from src.models.mlp_mixer import MlpMixer
+from src.utils import mpjpe_error
 from tqdm import tqdm
 import pickle
 import os
@@ -15,7 +16,7 @@ import timeit
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-model_name = "MLP_mixer_6k_981"
+model_name = "MLP_mixer_6k_981_test"
 pos_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/pos_train_981.npy')
 force_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_train_981.npy')
 pos_valid = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/pos_valid_981.npy')
@@ -80,8 +81,9 @@ def train(model):
                 prediction = model(train_data)
                 prediction = prediction.reshape(25,3)
                 # print('prediction tensor shape',prediction.shape)
-                loss = criterion(prediction, gt_data)
-
+                loss1 = criterion(prediction, gt_data)
+                loss2 = mpjpe_error(prediction,gt_data)
+                loss = loss1+loss2
                 # Backward pass and optimization step
                 loss.backward()
                 optimizer.step()
