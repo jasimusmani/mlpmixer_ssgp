@@ -34,7 +34,7 @@ log_dir = f'/home/jasimusmani/mlpmixer_ssgp-main/{model_name}'
 writer = SummaryWriter(log_dir=log_dir)
 
 lr = 0.0001
-num_epochs = 8000
+num_epochs = 6000
 batch_size = 1
 
 dataset_train = TrajectoryDataset(pos_train, force_train)
@@ -118,62 +118,62 @@ def train(model):
 
             progress_bar.close()
 
-            model.eval()
-            with torch.no_grad():
-                valid_running_loss = 0
-                for batch_idx_valid, (valid, gt_valid) in enumerate(valid_dataloader):
-                    iteration_valid = gt_valid.shape[0]
-                    progress_bar_valid = tqdm(total=iteration_valid, desc=f' Model Validation: Batch {batch_idx_valid}',
-                                        position=0,
-                                        leave=True)
-                    valid = valid.to(device)
-                    valid = valid.reshape(40, 7, 25, 3)
-                    running_loss = 0.0
+        model.eval()
+        with torch.no_grad():
+            valid_running_loss = 0
+            for batch_idx_valid, (valid, gt_valid) in enumerate(valid_dataloader):
+                iteration_valid = gt_valid.shape[0]
+                progress_bar_valid = tqdm(total=iteration_valid, desc=f' Model Validation: Batch {batch_idx_valid}',
+                                    position=0,
+                                    leave=True)
+                valid = valid.to(device)
+                valid = valid.reshape(40, 7, 25, 3)
+                running_loss = 0.0
 
-                    valid_gt = dataset_valid_gt[batch_idx_valid]
-                    valid_gt = valid_gt.reshape(-1,25,3)
+                valid_gt = dataset_valid_gt[batch_idx_valid]
+                valid_gt = valid_gt.reshape(-1,25,3)
 
-                    valid_prediction = []
-                    valid_gt = valid_gt.to(device)
-
-
-                    initial_valid = valid[0]
-                    initial_valid_data = initial_valid.reshape(1, 7, 25, 3)
-
-                    initial_valid_data = initial_valid_data.to(device)
-                    for i in range(314):
-
-                        prediction_valid = model(initial_valid_data)
-                        prediction_valid = prediction_valid.reshape(1,25, 3)
-
-                        valid_prediction.append(prediction_valid)
-                        initial_valid_data = initial_valid_data[:, 1:, :, :]
-                        prediction_valid = prediction_valid.reshape(1, 1, 25, 3)
-                        initial_valid_data = torch.cat([initial_valid_data, prediction_valid], dim=1)
-
-                    final_valid = torch.stack(valid_prediction)
-                    final_valid = final_valid.reshape(314, 25, 3)
-                    final_valid = torch.cat([initial_valid, final_valid], dim = 0)
-                    loss = mpjpe_error(final_valid, valid_gt)
-                        # print(f"Iteration Count: {batch_idx}, Validation Loss: {loss.item()}")
-                    valid_loss.append(loss.item())
-                    valid_running_loss += loss.item()
-                    progress_bar_valid.update(1)
-                    progress_bar_valid.set_postfix({'Loss': valid_running_loss / (batch_idx_valid + 1)})
-                average_valid_loss.append(valid_running_loss / len(valid_dataloader))
-                progress_bar_valid.close()
+                valid_prediction = []
+                valid_gt = valid_gt.to(device)
 
 
-                # Check if the current validation loss is the best so far
-                if average_valid_loss[-1] < best_valid_loss:
-                    best_valid_loss = average_valid_loss[-1]
+                initial_valid = valid[0]
+                initial_valid_data = initial_valid.reshape(1, 7, 25, 3)
 
-                    # Save the model checkpoint whenever the validation loss improves
-                    torch.save({
-                        'epoch': epoch,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                    }, checkpoint_file)
+                initial_valid_data = initial_valid_data.to(device)
+                for i in range(314):
+
+                    prediction_valid = model(initial_valid_data)
+                    prediction_valid = prediction_valid.reshape(1,25, 3)
+
+                    valid_prediction.append(prediction_valid)
+                    initial_valid_data = initial_valid_data[:, 1:, :, :]
+                    prediction_valid = prediction_valid.reshape(1, 1, 25, 3)
+                    initial_valid_data = torch.cat([initial_valid_data, prediction_valid], dim=1)
+
+                final_valid = torch.stack(valid_prediction)
+                final_valid = final_valid.reshape(314, 25, 3)
+                final_valid = torch.cat([initial_valid, final_valid], dim = 0)
+                loss = mpjpe_error(final_valid, valid_gt)
+                    # print(f"Iteration Count: {batch_idx}, Validation Loss: {loss.item()}")
+                valid_loss.append(loss.item())
+                valid_running_loss += loss.item()
+                progress_bar_valid.update(1)
+                progress_bar_valid.set_postfix({'Loss': valid_running_loss / (batch_idx_valid + 1)})
+            average_valid_loss.append(valid_running_loss / len(valid_dataloader))
+            progress_bar_valid.close()
+
+
+            # Check if the current validation loss is the best so far
+            if average_valid_loss[-1] < best_valid_loss:
+                best_valid_loss = average_valid_loss[-1]
+
+                # Save the model checkpoint whenever the validation loss improves
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, checkpoint_file)
 
             progress_bar_main.update(1)
             progress_bar_main.set_postfix({'Loss': running_loss / (epoch + 1)})
