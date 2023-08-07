@@ -16,13 +16,16 @@ import timeit
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-model_name = "MLP_mixer_8k_981_mpje"
-pos_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/pos_train_981.npy')
-force_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_train_981.npy')
-pos_valid = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/pos_valid_981.npy')
-force_valid = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_valid_981.npy')
-pos_test = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/pos_test_981.npy')
-force_test = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_test_981.npy')
+model_name = "MLP_mixer_global_mpjpe_6k"
+pos_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/position_wheel_train.npy')
+force_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_wheel_train.npy')
+pos_valid = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/position_wheel_valid.npy')
+force_valid = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_wheel_valid.npy')
+pos_test = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/position_wheel_test.npy')
+force_test = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/force_wheel_test.npy')
+global_train = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/global_features_train.npy')
+global_test = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/global_features_test.npy')
+global_valid = np.load('/home/jasimusmani/mlpmixer_ssgp-main/dataset/global_features_valid.npy')
 
 output_folder = f'/home/jasimusmani/mlpmixer_ssgp-main/rollout/{model_name}'
 if not os.path.exists(output_folder):
@@ -37,10 +40,10 @@ lr = 0.0001
 num_epochs = 6000
 batch_size = 1
 
-dataset_train = TrajectoryDataset(pos_train, force_train)
-dataset_valid = TrajectoryDataset(pos_valid, force_valid)
+dataset_train = TrajectoryDataset(pos_train, force_train, global_train)
+dataset_valid = TrajectoryDataset(pos_valid, force_valid, global_valid)
 dataset_valid_gt = ValidationTrajectoryDataset(pos_valid, force_valid)
-dataset_test = TrajectoryDataset(pos_test, force_test)
+dataset_test = TrajectoryDataset(pos_test, force_test, global_test)
 
 train_dataloader = DataLoader(dataset_train, batch_size=batch_size, shuffle=False)
 valid_dataloader = DataLoader(dataset_valid, batch_size=batch_size, shuffle=False)
@@ -52,8 +55,10 @@ average_valid_loss = []
 valid_loss = []
 
 # model1 = MLP()
-model = MlpMixer(hidden_dim=525, seq_len=7, num_classes=75, num_blocks=4, pred_len=1, tokens_mlp_dim=7,
-                 channels_mlp_dim=525)
+# model = MlpMixer(hidden_dim=525, seq_len=7, num_classes=75, num_blocks=4, pred_len=1, tokens_mlp_dim=7,
+#                  channels_mlp_dim=525)
+model = MlpMixer(hidden_dim=546, seq_len=7, num_classes=75, num_blocks=4, pred_len=1, tokens_mlp_dim=7,
+                 channels_mlp_dim=546)
 model = model.to(device)
 
 
@@ -84,7 +89,7 @@ def train(model):
         for batch_idx, (train, gt) in enumerate(train_dataloader):
             train = train.to(device)
             gt = gt.to(device)
-            train = train.reshape(40, 7, 25, 3)
+            train = train.reshape(40, 7, 26, 3)
             gt = gt.reshape(40, 1, 25, 3)
             running_loss = 0.0
             iteration = gt.shape[0]
@@ -95,7 +100,7 @@ def train(model):
                 optimizer.zero_grad()
                 train_data = train[i, :, :, :]
                 gt_data = gt[i, :, :, :]
-                train_data = train_data.reshape(1, 7, 25, 3)
+                train_data = train_data.reshape(1, 7, 26, 3)
                 gt_data = gt_data.reshape(1, 1, 25, 3)
                 train_data = train_data.to(device)
                 gt_data = gt_data.to(device)
@@ -127,41 +132,31 @@ def train(model):
                                     position=0,
                                     leave=True)
                 valid = valid.to(device)
-                valid = valid.reshape(40, 7, 25, 3)
+                gt_valid = gt_valid.to(device)
+                gt_valid = gt_valid.reshape(40, 1, 25, 3)
+                valid = valid.reshape(40, 7, 26, 3)
                 running_loss = 0.0
-
-                valid_gt = dataset_valid_gt[batch_idx_valid]
-                valid_gt = valid_gt.reshape(-1,25,3)
-
-                valid_prediction = []
-                valid_gt = valid_gt.to(device)
+                iteration_valid = gt_valid.shape[0]
 
 
-                initial_valid = valid[0]
-                initial_valid_data = initial_valid.reshape(1, 7, 25, 3)
+                for k in range(iteration_valid):
+                    valid_data = valid[k, :, :, :]
+                    gt_data = gt_valid[k, :, :, :]
+                    valid_data = valid_data.reshape(1, 7, 26, 3)
+                    gt_data = gt_data.reshape(1, 1, 25, 3)
+                    valid_data = valid_data.to(device)
+                    gt_data = gt_data.to(device)
+                    prediction_valid = model(valid_data)
+                    prediction_valid = prediction_valid.reshape(25, 3)
 
-                initial_valid_data = initial_valid_data.to(device)
-                for i in range(314):
-
-                    prediction_valid = model(initial_valid_data)
-                    prediction_valid = prediction_valid.reshape(1,25, 3)
-
-                    valid_prediction.append(prediction_valid)
-                    initial_valid_data = initial_valid_data[:, 1:, :, :]
-                    prediction_valid = prediction_valid.reshape(1, 1, 25, 3)
-                    initial_valid_data = torch.cat([initial_valid_data, prediction_valid], dim=1)
-
-                final_valid = torch.stack(valid_prediction)
-                final_valid = final_valid.reshape(314, 25, 3)
-                final_valid = torch.cat([initial_valid, final_valid], dim = 0)
-                loss = mpjpe_error(final_valid, valid_gt)
+                    loss = mpjpe_error(prediction_valid, gt_data)
                     # print(f"Iteration Count: {batch_idx}, Validation Loss: {loss.item()}")
-                valid_loss.append(loss.item())
-                valid_running_loss += loss.item()
-                progress_bar_valid.update(1)
-                progress_bar_valid.set_postfix({'Loss': valid_running_loss / (batch_idx_valid + 1)})
-            average_valid_loss.append(valid_running_loss / len(valid_dataloader))
-            progress_bar_valid.close()
+                    valid_loss.append(loss.item())
+                    valid_running_loss += loss.item()
+                    progress_bar_valid.update(1)
+                    progress_bar_valid.set_postfix({'Loss': valid_running_loss / (batch_idx_valid + 1)})
+                average_valid_loss.append(valid_running_loss / len(valid_dataloader))
+                progress_bar_valid.close()
 
 
             # Check if the current validation loss is the best so far
@@ -202,17 +197,19 @@ def rollout(model, output_folder):
             for i in range(314):
                 prediction_test = model(initial_data)
                 prediction_test = prediction_test.reshape(1, 25, 3)
-                A = initial_data[:, 6:, :16, :].numpy()
-                A = A.reshape(16, 3)
-                B = prediction_test[:, 0:16, :].numpy()
-                B = B.reshape(16, 3)
-                corrected_position = euclidean_transform_3D(A, B)
-                pca_pred = prediction_test[:, 16:, :].numpy()
-                pca_pred = pca_pred.reshape(9, 3)
-                corrected_pred = np.concatenate((corrected_position, pca_pred), axis=0)
-                # rollout_prediction.append(prediction_test)
-                corrected_pred = torch.from_numpy(corrected_pred.reshape(1, 25, 3))
-                rollout_prediction.append(corrected_pred)
+
+                # A = initial_data[:, 6:, :16, :].numpy()
+                # A = A.reshape(16, 3)
+                # B = prediction_test[:, 0:16, :].numpy()
+                # B = B.reshape(16, 3)
+                # corrected_position = euclidean_transform_3D(A, B)
+                # pca_pred = prediction_test[:, 16:, :].numpy()
+                # pca_pred = pca_pred.reshape(9, 3)
+                # corrected_pred = np.concatenate((corrected_position, pca_pred), axis=0)
+                # corrected_pred = torch.from_numpy(corrected_pred.reshape(1, 25, 3))
+                # rollout_prediction.append(corrected_pred)
+
+                rollout_prediction.append(prediction_test)
                 initial_data = initial_data[:, 1:, :, :]
                 prediction_test = prediction_test.reshape(1, 1, 25, 3)
                 initial_data = torch.cat([initial_data, prediction_test], dim=1)
@@ -249,4 +246,4 @@ def rollout(model, output_folder):
 
 
 train(model)
-rollout(model, output_folder)
+# rollout(model, output_folder)
