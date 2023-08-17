@@ -89,7 +89,8 @@ class MixerBlock(nn.Module):
 
     def forward(self, x):
         # shape x [256, 8, 512] [bs, patches/time_steps, channels
-        x = x.reshape(7, 546)
+        # x = x.reshape(7, 546)
+        x = x.reshape(self.seq_len, self.hidden_dim)
         y = self.LN1(x)
 
         y = y.transpose(0, 1)
@@ -180,7 +181,7 @@ class MixerBlock_Token(nn.Module):
 class MlpMixer(nn.Module):
     def __init__(self, num_classes, num_blocks, hidden_dim, tokens_mlp_dim,
                  channels_mlp_dim, seq_len, pred_len, activation='gelu',
-                 mlp_block_type='normal', regularization=0, input_size=78,
+                 mlp_block_type='normal', regularization=0, input_size=87,
                  initialization='none', r_se=4, use_max_pooling=False,
                  use_se=False):
 
@@ -234,19 +235,22 @@ class MlpMixer(nn.Module):
         self.conv_out = nn.Conv1d(7, 1, 1, stride=1)
 
     def forward(self, x):
-        x = x.reshape(7,78)
+        # x = x.reshape(7, 78)
+        x = x.reshape(self.seq_len, self.num_classes)
         x = x.unsqueeze(1)
 
         y = self.conv(x)
-        y = y.squeeze(dim=1).transpose(1, 2)
         # print('value before mixer block', y.shape)
+        y = y.squeeze(dim=1).transpose(1, 2)
+
         # [256, 8, 512] [bs, patches/time_steps, channels]
         for mb in self.Mixer_Block:
             y = mb(y)
         y = self.LN(y)
         # print('shape before conv out', y.shape)
         a = self.conv_out(y)
-        a = a.reshape(1,546)
+        # a = a.reshape(1, 546)
+        a = a.reshape(1, self.hidden_dim)
         # print('shape conv out',a.shape)
         out = self.fc_out(a)
         # print('final shape',out.shape)
