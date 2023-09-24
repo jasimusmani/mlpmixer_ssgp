@@ -5,6 +5,129 @@ import torch
 import torch.nn.functional as F
 
 
+class ChannelSELayer(nn.Module):
+    """
+    Re-implementation of Squeeze-and-Excitation (SE) block described in:
+        *Hu et al., Squeeze-and-Excitation Networks, arXiv:1709.01507*
+
+    """
+
+    def __init__(self, num_channels, reduction_ratio=4):
+        """
+
+        :param num_channels: No of input channels
+        :param reduction_ratio: By how much should the num_channels should be reduced
+        """
+        super(ChannelSELayer, self).__init__()
+        num_channels_reduced = num_channels // reduction_ratio
+        self.reduction_ratio = reduction_ratio
+        self.fc1 = nn.Linear(num_channels, num_channels_reduced, bias=True)
+        self.fc2 = nn.Linear(num_channels_reduced, num_channels, bias=True)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+        self.batch_size = 1
+        self.H = 15
+        self.W = 609
+    def forward(self, input_tensor):
+        """
+
+        :param input_tensor: X, shape = (batch_size, num_channels, H, W)
+        :return: output tensor
+        """
+        # H, W = input_tensor.size()
+        input_tensor = input_tensor.reshape(1,self.H, self.W)
+        print('input tensor: ', input_tensor.shape)
+        # batch_size, H, W = input_tensor.size()
+        # Average along each channel
+        squeeze_tensor = input_tensor.reshape(self.batch_size, self.W, -1).mean(dim=2)
+#         print('squeeze tensor: ', squeeze_tensor.shape)
+        # channel excitation
+        fc_out_1 = self.relu(self.fc1(squeeze_tensor))
+        fc_out_2 = self.sigmoid(self.fc2(fc_out_1))
+#         print('fc out 2', fc_out_2.shape)
+        a, b = squeeze_tensor.size()
+#         print(fc_out_2.view(a, b, 1, 1).shape)
+#         output_tensor = torch.mul(input_tensor, fc_out_2.view(a, b, 1, 1))
+        output_tensor = torch.mul(input_tensor, fc_out_2.view(a, b))
+        return output_tensor
+
+
+class SpatialSELayer(nn.Module):
+    """
+    Re-implementation of SE block -- squeezing spatially and exciting channel-wise described in:
+        *Roy et al., Concurrent Spatial and Channel Squeeze & Excitation in Fully Convolutional Networks, MICCAI 2018*
+    """
+
+    def __init__(self, num_channels):
+        """
+
+        :param num_channels: No of input channels
+        """
+        super(SpatialSELayer, self).__init__()
+        self.conv = nn.Conv2d(num_channels, 1, 1)
+        self.sigmoid = nn.Sigmoid()
+        self.H = 15
+        self.W = 1638
+
+    def forward(self, input_tensor, weights=None):
+        """
+
+        :param weights: weights for few shot learning
+        :param input_tensor: X, shape = (batch_size, num_channels, H, W)
+        :return: output_tensor
+        """
+        # spatial squeeze
+        # H, W = input_tensor.size()
+        input_tensor = torch.transpose(input_tensor,1,0)
+#         print(input_tensor.shape)
+        input_tensor = input_tensor.reshape(1,self.W,self.H,1)
+
+
+        if weights is not None:
+            weights = torch.mean(weights, dim=0)
+            weights = weights.view(1, self.W, 1, 1)
+            out = F.conv2d(input_tensor, weights)
+        else:
+            out = self.conv(input_tensor)
+        squeeze_tensor = self.sigmoid(out)
+#         print('shape of squeeze tensor: ', squeeze_tensor.shape)
+
+        # spatial excitation
+#         print(input_tensor.size(), squeeze_tensor.size())
+#         print(squeeze_tensor)
+        output_tensor = torch.mul(input_tensor, squeeze_tensor)
+        #output_tensor = torch.mul(input_tensor, squeeze_tensor)
+        output_tensor = output_tensor.reshape(1,self.H,self.W)
+        return output_tensor
+
+
+class ChannelSpatialSELayer(nn.Module):
+    """
+    Re-implementation of concurrent spatial and channel squeeze & excitation:
+        *Roy et al., Concurrent Spatial and Channel Squeeze & Excitation in Fully Convolutional Networks, MICCAI 2018, arXiv:1803.02579*
+    """
+
+    def __init__(self, num_channels, reduction_ratio=4):
+        """
+
+        :param num_channels: No of input channels
+        :param reduction_ratio: By how much should the num_channels should be reduced
+        """
+        super(ChannelSpatialSELayer, self).__init__()
+        self.cSE = ChannelSELayer(num_channels, reduction_ratio)
+        self.sSE = SpatialSELayer(num_channels)
+
+    def forward(self, input_tensor):
+        """
+
+        :param input_tensor: X, shape = (batch_size, num_channels, H, W)
+        :return: output_tensor
+        """
+        output_tensor = torch.max(self.cSE(input_tensor), self.sSE(input_tensor))
+        return output_tensor
+
+
+
 class SELayer(nn.Module):
     def __init__(self, c, r=4, use_max_pooling=False):
         super().__init__()
@@ -17,10 +140,18 @@ class SELayer(nn.Module):
         )
 
     def forward(self, x):
+        s, h = x.shape
+        x = x.reshape(1, s, h)
         bs, s, h = x.shape
+        # print('input into se block: ', x.shape)
         y = self.squeeze(x).view(bs, s)
+        # print('input into squeeze: ', y.shape)
         y = self.excitation(y).view(bs, s, 1)
-        return x * y.expand_as(x)
+        # print('input into excitation: ', y.shape)
+        y = x * y.expand_as(x)
+        y = y.reshape(s,h)
+        # print('output excitation: ', y.shape)
+        return y
 
 
 def mish(x):
@@ -68,7 +199,7 @@ class MlpBlock(nn.Module):
 
 class MixerBlock(nn.Module):
     def __init__(self, tokens_mlp_dim, channels_mlp_dim, seq_len, hidden_dim, activation='gelu', regularization=0,
-                 initialization='none', r_se=4, use_max_pooling=False, use_se=True):
+                 initialization='none', r_se=4, use_max_pooling=False, use_se=False, use_chse=False, use_ch=True):
         super().__init__()
         self.tokens_mlp_dim = tokens_mlp_dim
         self.channels_mlp_dim = channels_mlp_dim
@@ -81,8 +212,14 @@ class MixerBlock(nn.Module):
                                                  activation=activation, regularization=regularization,
                                                  initialization=initialization)
         self.use_se = use_se
+        self.use_chse = use_chse
+        self.use_ch=use_ch
         if self.use_se:
             self.se = SELayer(self.seq_len, r=r_se, use_max_pooling=use_max_pooling)
+        if self.use_chse:
+            self.chse = ChannelSpatialSELayer(self.hidden_dim)
+        if self.use_ch:
+            self.ch = SpatialSELayer(self.hidden_dim)
 
         self.LN1 = nn.LayerNorm(self.hidden_dim)
         self.LN2 = nn.LayerNorm(self.hidden_dim)
@@ -101,6 +238,10 @@ class MixerBlock(nn.Module):
 
         if self.use_se:
             y = self.se(y)
+        if self.use_chse:
+            y = self.chse(y)
+        if self.use_ch:
+            y = self.ch(y)
 
         x = x + y
         y = self.LN2(x)
@@ -108,13 +249,18 @@ class MixerBlock(nn.Module):
 
         if self.use_se:
             y = self.se(y)
+        if self.use_chse:
+            y = self.chse(y)
+        if self.use_ch:
+            # print('y shape', y.shape)
+            y = self.ch(y)
 
         return x + y
 
 
 class MixerBlock_Channel(nn.Module):
     def __init__(self, channels_mlp_dim, seq_len, hidden_dim, activation='gelu', regularization=0,
-                 initialization='none', r_se=4, use_max_pooling=False, use_se=True):
+                 initialization='none', r_se=4, use_max_pooling=False, use_se=False, use_chse=False, use_ch=True):
         super().__init__()
         self.channels_mlp_dim = channels_mlp_dim
         self.seq_len = seq_len
@@ -123,9 +269,14 @@ class MixerBlock_Channel(nn.Module):
                                                  activation=activation, regularization=regularization,
                                                  initialization=initialization)
         self.use_se = use_se
+        self.use_chse=use_chse
+        self.use_ch=use_ch
         if self.use_se:
             self.se = SELayer(self.seq_len, r=r_se, use_max_pooling=use_max_pooling)
-
+        if self.use_chse:
+            self.chse = ChannelSpatialSELayer(self.hidden_dim)
+        if self.use_ch:
+            self.chse = SpatialSELayer(self.hidden_dim)
         self.LN2 = nn.LayerNorm(self.hidden_dim)
 
         # self.act1 = nn.GELU()
@@ -136,18 +287,24 @@ class MixerBlock_Channel(nn.Module):
 
         if self.use_se:
             y = self.se(y)
+        if self.use_chse:
+            y = self.chse(y)
         x = x + y
         y = self.LN2(x)
         y = self.mlp_block_channel_mixing(y)
         if self.use_se:
             y = self.se(y)
+        if self.use_ch:
+            y =self.ch(y)
+        if self.use_chse:
+            y =self.chse(y)
 
         return x + y
 
 
 class MixerBlock_Token(nn.Module):
     def __init__(self, tokens_mlp_dim, seq_len, hidden_dim, activation='gelu', regularization=0,
-                 initialization='none', r_se=4, use_max_pooling=False, use_se=True):
+                 initialization='none', r_se=4, use_max_pooling=False, use_se=False, use_chse=False, use_ch=True):
         super().__init__()
         self.tokens_mlp_dim = tokens_mlp_dim
 
@@ -158,9 +315,14 @@ class MixerBlock_Token(nn.Module):
                                                initialization=initialization)
 
         self.use_se = use_se
-
+        self.use_chse=use_chse
+        self.use_ch=use_ch
         if self.use_se:
             self.se = SELayer(self.seq_len, r=r_se, use_max_pooling=use_max_pooling)
+        if self.use_chse:
+            self.use_chse=ChannelSpatialSELayer(self.hidden_dim)
+        if self.use_ch:
+            self.use_ch=SpatialSELayer(self.hidden_dim)
 
         self.LN1 = nn.LayerNorm(self.hidden_dim)
 
@@ -170,9 +332,14 @@ class MixerBlock_Token(nn.Module):
         y = y.transpose(1, 2)
         y = self.mlp_block_token_mixing(y)
         y = y.transpose(1, 2)
-
+        print('output before se: ', y.shape)
         if self.use_se:
             y = self.se(y)
+        if self.use_chse:
+            y = self.chse(y)
+        if self.use_ch:
+            y = self.ch(y)
+        print('output after se: ', y.shape)
         x = x + y
 
         return x + y
@@ -180,10 +347,10 @@ class MixerBlock_Token(nn.Module):
 
 class MlpMixer(nn.Module):
     def __init__(self, num_classes, num_blocks, hidden_dim, tokens_mlp_dim,
-                 channels_mlp_dim, seq_len, pred_len, activation='gelu',
-                 mlp_block_type='normal', regularization=0, input_size=87,
+                 channels_mlp_dim, output, seq_len, pred_len, activation='gelu',
+                 mlp_block_type='normal', regularization=0, input_size=78,
                  initialization='none', r_se=4, use_max_pooling=False,
-                 use_se=False):
+                 use_se=False, use_chse=False, use_ch=True):
 
         super().__init__()
         self.num_classes = num_classes
@@ -196,7 +363,7 @@ class MlpMixer(nn.Module):
         # self.conv = nn.Conv1d(1, self.hidden_dim, (1, self.input_size), stride=1)
         self.conv = nn.Conv1d(1, self.hidden_dim, self.input_size, stride=1)
         self.activation = activation
-
+        self.output = output
         self.channel_only = False  # False #True
         self.token_only = False  # False #True
 
@@ -206,7 +373,7 @@ class MlpMixer(nn.Module):
                                                                 regularization=regularization,
                                                                 initialization=initialization,
                                                                 r_se=r_se, use_max_pooling=use_max_pooling,
-                                                                use_se=use_se)
+                                                                use_se=use_se, use_ch=use_ch,use_chse=use_chse)
                                              for _ in range(num_blocks))
 
         if self.token_only:
@@ -214,7 +381,8 @@ class MlpMixer(nn.Module):
             self.Mixer_Block = nn.ModuleList(MixerBlock_Token(self.tokens_mlp_dim, self.seq_len, self.hidden_dim,
                                                               activation=self.activation, regularization=regularization,
                                                               initialization=initialization,
-                                                              r_se=r_se, use_max_pooling=use_max_pooling, use_se=use_se)
+                                                              r_se=r_se, use_max_pooling=use_max_pooling, use_se=use_se,
+                                                              use_chse=use_chse, use_ch=use_ch)
                                              for _ in range(num_blocks))
 
         else:
@@ -222,17 +390,18 @@ class MlpMixer(nn.Module):
             self.Mixer_Block = nn.ModuleList(MixerBlock(self.tokens_mlp_dim, self.channels_mlp_dim,
                                                         self.seq_len, self.hidden_dim, activation=self.activation,
                                                         regularization=regularization, initialization=initialization,
-                                                        r_se=r_se, use_max_pooling=use_max_pooling, use_se=use_se)
+                                                        r_se=r_se, use_max_pooling=use_max_pooling, use_se=use_se,
+                                                        use_chse=use_chse, use_ch=use_ch)
                                              for _ in range(num_blocks))
 
         self.LN = nn.LayerNorm(self.hidden_dim)
 
-        self.fc_out = nn.Linear(self.hidden_dim, self.num_classes)
-
+        # self.fc_out = nn.Linear(self.hidden_dim, self.num_classes)
+        self.fc_out = nn.Linear(self.hidden_dim, self.output)
 
         self.pred_len = pred_len
-        # self.conv_out = nn.Conv1d(self.seq_len, self.pred_len, 1, stride=1)
-        self.conv_out = nn.Conv1d(7, 1, 1, stride=1)
+        self.conv_out = nn.Conv1d(self.seq_len, self.pred_len, 1, stride=1)
+        # self.conv_out = nn.Conv1d(7, 1, 1, stride=1)
 
     def forward(self, x):
         # x = x.reshape(7, 78)
